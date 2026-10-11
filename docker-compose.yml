@@ -1,0 +1,59 @@
+# Phase 1: infrastructure only. Java services run on the host (see README.md).
+# Host ports avoid 5433/6379/5000/7000 and the sibling stack's ports:
+# Postgres 5436, Kafka 9095, Redis 6381, Keycloak 8180, MailHog 1026/8026.
+name: pulsewatch
+services:
+  postgres:
+    build: ./infra/postgres
+    image: pulsewatch/postgres:2.20.3-pg16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports: ["5436:5432"]
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      retries: 20
+  kafka:
+    image: apache/kafka:4.0.2
+    ports: ["9095:9095"]
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:9095
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:9095
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    volumes: [kafka-data:/var/lib/kafka/data]
+  redis:
+    image: redis:7.4.5
+    ports: ["6381:6379"]
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.4.7
+    command: start-dev --import-realm
+    ports: ["8180:8080"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak_db
+      KC_DB_USERNAME: keycloak_user
+      KC_DB_PASSWORD: keycloak_pass
+      KC_HOSTNAME: http://localhost:8180
+    volumes: [./infra/keycloak/realm-pulsewatch.json:/opt/keycloak/data/import/realm-pulsewatch.json:ro]
+    depends_on:
+      postgres:
+        condition: service_healthy
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    ports: ["1026:1025", "8026:8025"]
+volumes:
+  postgres-data:
+  kafka-data:
